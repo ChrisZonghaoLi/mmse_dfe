@@ -9,7 +9,6 @@ n_taps_dfe=2
 n_taps_pre = 1
 n_taps_post = 3
 n_taps_ffe = n_taps_pre + n_taps_post + 1
-SNR = 35
 samples_per_symbol = 8
 
 # invoke FFE and MMSE
