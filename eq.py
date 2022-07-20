@@ -2,6 +2,8 @@ import numpy as np
 from scipy.linalg import toeplitz
 from numpy import linalg
 
+# Matlab code (not the same but the skeletons are similar): http://bard.ece.cornell.edu/downloads/tutorials/fsedfe/fsedfe.html
+
 class DFE():
     '''
         This is the implementation of DFE
@@ -80,13 +82,13 @@ class FFE():
         for i in range(self.n_taps_ffe):
             self.A[:, i] = np.roll(H, i)
             
-    def mmse(self, SNR, optimize_delay=False, zf=False):
+    def mmse(self, SNR, signal_power, optimize_delay=False, zf=False):
         # Autocorrelation matrix: A.T @ A
         # cross-correlation matrix: A.T @ c
         
         if optimize_delay==True:
             # sweep all the possible number of ffe precurosrs
-            self.ummse = np.inf 
+            self.unbiased_SNR = -np.inf 
             for i in range(self.n_taps_ffe):
                 delay = i+self.channel_precursor
                 c = np.zeros((self.channel_coefficients_len+self.n_taps_ffe-1,1))
@@ -100,17 +102,25 @@ class FFE():
                     b = np.linalg.inv(self.A.T @ W @ self.A + np.eye(self.n_taps_ffe) * 10**(-(SNR/10))) @ (self.A.T @ c)
                 else:
                     b = np.linalg.inv(self.A.T @ W @ self.A) @ (self.A.T @ c)
+
+                # find  MMSE
+                # cross-correlation
+                Rxy = signal_power * (self.A.T @ c)
+                # auto-correlation
+                # Ryy = signal_power * (self.A.T @ self.A + np.eye(self.n_taps_ffe) * 10**(-(SNR/10)))
                 
-                # find unbiased MMSE
-                t = self.A @ b
-                b_unbiased = b/max(abs(t))
-                t = np.squeeze(self.A @ b_unbiased)
-                t[delay+1:delay+1+self.n_taps_dfe] = 0 # due to DFE post cursors are removed 
-                # print(t)
-                # print(c)
-                ummse_new = linalg.norm(t - np.squeeze(c))**2 + 10**(-(SNR/10))*linalg.norm(np.squeeze(b_unbiased))**2
-                if ummse_new < self.ummse:
-                    self.ummse = ummse_new
+                if zf == False:
+                    mmse = signal_power - b.T @ Rxy
+                    unbiased_SNR = 10*np.log10(signal_power/mmse - 1)
+                else:
+                    mmse = (signal_power - b.T @ Rxy) + (signal_power * 10**(-(SNR/10)) * linalg.norm(np.squeeze(b))**2)
+                    unbiased_SNR = 10*np.log10(signal_power/mmse)
+                    
+                # print(f'mmse: {mmse} | signal_power: {signal_power} |  b.T @ Rxy: {b.T @ Rxy} ')
+                # print(f'unbiased_SNR: {unbiased_SNR}')
+                
+                if unbiased_SNR > self.unbiased_SNR:
+                    self.unbiased_SNR = unbiased_SNR
                     self.delay = delay
                     self.c = c
                     self.W = W
@@ -121,10 +131,16 @@ class FFE():
                     b = b/np.sum(abs(b))
                     ffe_tap_weights = np.squeeze(b)       
         else:
+            Rxy = signal_power * (self.A.T @ self.c)
             if zf == False:
                 b = np.linalg.inv(self.A.T @ self.W @ self.A + np.eye(self.n_taps_ffe) * 10**(-(SNR/10))) @ (self.A.T @ self.c)
+                mmse = signal_power - b.T @ Rxy
+                self.unbiased_SNR = 10*np.log10(signal_power/mmse - 1)
             else:
-                b = np.linalg.inv(self.A.T @ W @ self.A) @ (self.A.T @ c)
+                b = np.linalg.inv(self.A.T @ self.W @ self.A) @ (self.A.T @ self.c)        
+                mmse = (signal_power - b.T @ Rxy) + (signal_power * 10**(-(SNR/10)) * linalg.norm(np.squeeze(b))**2)
+                self.unbiased_SNR = 10*np.log10(signal_power/mmse)
+
             #normalize tap weights
             b = b/np.sum(abs(b))
     
