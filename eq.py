@@ -80,7 +80,7 @@ class FFE():
         for i in range(self.n_taps_ffe):
             self.A[:, i] = np.roll(H, i)
             
-    def mmse(self, SNR, optimize_delay=False):
+    def mmse(self, SNR, optimize_delay=False, zf=False):
         # Autocorrelation matrix: A.T @ A
         # cross-correlation matrix: A.T @ c
         
@@ -95,8 +95,11 @@ class FFE():
                 tmp = np.ones(self.channel_coefficients_len+self.n_taps_ffe-1)
                 tmp[delay+1:delay+1+self.n_taps_dfe] = 0
                 W = np.diag(tmp)
-        
-                b = np.linalg.inv(self.A.T @ W @ self.A + np.eye(self.n_taps_ffe) * 10**(-(SNR/10))) @ (self.A.T @ c)
+                
+                if zf == False:
+                    b = np.linalg.inv(self.A.T @ W @ self.A + np.eye(self.n_taps_ffe) * 10**(-(SNR/10))) @ (self.A.T @ c)
+                else:
+                    b = np.linalg.inv(self.A.T @ W @ self.A) @ (self.A.T @ c)
                 
                 # find unbiased MMSE
                 t = self.A @ b
@@ -116,11 +119,12 @@ class FFE():
                     
                     #normalize tap weights
                     b = b/np.sum(abs(b))
-                    ffe_tap_weights = np.squeeze(b)
-                    
+                    ffe_tap_weights = np.squeeze(b)       
         else:
-            b = np.linalg.inv(self.A.T @ self.W @ self.A + np.eye(self.n_taps_ffe) * 10**(-(SNR/10))) @ (self.A.T @ self.c)
-                    
+            if zf == False:
+                b = np.linalg.inv(self.A.T @ self.W @ self.A + np.eye(self.n_taps_ffe) * 10**(-(SNR/10))) @ (self.A.T @ self.c)
+            else:
+                b = np.linalg.inv(self.A.T @ W @ self.A) @ (self.A.T @ c)
             #normalize tap weights
             b = b/np.sum(abs(b))
     
