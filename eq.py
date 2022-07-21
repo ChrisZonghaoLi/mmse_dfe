@@ -82,7 +82,7 @@ class FFE():
         for i in range(self.n_taps_ffe):
             self.A[:, i] = np.roll(H, i)
             
-    def mmse(self, SNR, signal_power, optimize_delay=False, zf=False):
+    def mmse(self, SNR, signal_power, optimize_delay=True, zf=False):
         # Autocorrelation matrix: A.T @ A
         # cross-correlation matrix: A.T @ c
         
