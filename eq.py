@@ -133,13 +133,16 @@ class FFE():
         else:
             Rxy = signal_power * (self.A.T @ self.c)
             if zf == False:
+                Ryy = signal_power * (self.A.T @ self.A) + np.eye(self.n_taps_ffe) * 10**(-(SNR/10))
                 b = np.linalg.inv(self.A.T @ self.W @ self.A + np.eye(self.n_taps_ffe) * 10**(-(SNR/10))) @ (self.A.T @ self.c)
                 mmse = signal_power - b.T @ Rxy
                 self.unbiased_SNR = 10*np.log10(signal_power/mmse - 1)
             else:
+                Ryy = signal_power * (self.A.T @ self.A)
                 b = np.linalg.inv(self.A.T @ self.W @ self.A) @ (self.A.T @ self.c)        
                 mmse = (signal_power - b.T @ Rxy) + (signal_power * 10**(-(SNR/10)) * linalg.norm(np.squeeze(b))**2)
                 self.unbiased_SNR = 10*np.log10(signal_power/mmse)
+                # print(self.unbiased_SNR )
 
             #normalize tap weights
             b = b/np.sum(abs(b))
@@ -159,3 +162,103 @@ class FFE():
         h_out = h_out[self.n_taps_pre*self.samples_per_symbol:self.n_taps_pre*self.samples_per_symbol+length]
         
         return h_out
+
+
+def mmse_ffe_dfe(sampled_pulse_response, n_taps_ffe, n_taps_dfe, signal_power, noise_var, oversampling=1, delay=-1, zf=False):
+
+    noise_var_scaler = np.copy(noise_var)
+    noise_auto = np.append(np.array([noise_var]), np.zeros(n_taps_ffe-1))
+
+    size = len(sampled_pulse_response)
+    nu = int(np.ceil(size/oversampling) - 1) # channel memory so that it is FIR
+    sampled_pulse_response = np.append(sampled_pulse_response, np.zeros((nu+1)*oversampling-size))
+    
+    # error check
+    if n_taps_ffe <= 0:
+        print(f'{n_taps_ffe} should be >0')
+    if n_taps_dfe <0:
+        print(f'{n_taps_dfe} should be >=0')
+    if delay > n_taps_ffe+nu -1:
+        print(f'delay must be <= {n_taps_ffe}+{len(sampled_pulse_response)}-2')
+    if delay < -1:
+        print('delay must be >= -1')
+    if delay == -1:
+        print('optimal delay will be searched')
+        delay = [i for i in range(n_taps_ffe+nu)]
+
+    if type(delay) == int:
+        delay = [delay]
+    
+    # do some oversampling
+    sampled_pulse_response_temp = np.zeros((oversampling, nu+1))
+    sampled_pulse_response_temp[:oversampling,0] = np.append(sampled_pulse_response[0], np.zeros(oversampling-1))
+    for i in range(nu):
+        sampled_pulse_response_temp[:oversampling, i+1] = np.conj(np.flip(sampled_pulse_response[i*oversampling+1:i*oversampling+2]).T)
+        
+    dfseSNR = -100
+    
+    for d in delay:
+        n_taps_dfe_used = min(n_taps_ffe+nu-1-d, n_taps_dfe)
+        
+        # generate channel pulse matrix
+        P = np.zeros((n_taps_ffe*oversampling+n_taps_dfe_used, n_taps_ffe+nu))
+        for i in range(n_taps_ffe):
+            P[i*oversampling:i*oversampling+1, i:(i+nu+1)] = sampled_pulse_response_temp
+        P[n_taps_ffe*oversampling:n_taps_ffe*oversampling+n_taps_dfe_used, d+1:d+n_taps_dfe_used+1] = np.eye(n_taps_dfe_used)
+        
+        # compute Rn, noise autocorrelation matrix
+        Rn = np.zeros((n_taps_ffe*oversampling+n_taps_dfe_used, n_taps_ffe*oversampling+n_taps_dfe_used))
+        if zf == False:
+            Rn[:n_taps_ffe*oversampling, :n_taps_ffe*oversampling] = toeplitz(noise_auto)
+        
+        # desire output
+        c = np.zeros((n_taps_ffe+nu, 1))
+        c[d,:] = 1
+        
+        # MMSE
+        Ry = P @ P.T * signal_power + Rn
+        Rxy = P @ c * signal_power
+        w_t_new = np.linalg.inv(Ry) @ Rxy
+        
+        # new SNR
+        if zf == False:
+            sigma_dfse = np.squeeze(signal_power - np.real(w_t_new.T @ Rxy))
+            dfseSNR_new = 10*np.log10(signal_power/sigma_dfse-1)
+        else:
+            sigma_dfse = np.squeeze(signal_power - np.real(w_t_new.T @ Rxy)) + np.squeeze(noise_var_scaler * linalg.norm(np.squeeze(w_t_new)[:n_taps_ffe])**2)
+            dfseSNR_new = 10*np.log10(signal_power/sigma_dfse)
+        
+        if dfseSNR_new >= dfseSNR:
+            w_t = w_t_new
+            dfseSNR = dfseSNR_new
+            delay_opt = d
+            n_taps_dfe_final = n_taps_dfe_used
+            
+    if n_taps_dfe_final < n_taps_dfe:
+        print(f'For optimal DFE filter n_taps_dfe_final={n_taps_dfe_final} taps are used insteald of n_taps_dfe={n_taps_dfe} ')
+    
+    w_t = np.squeeze(w_t)
+    
+    return w_t, delay_opt, dfseSNR, n_taps_dfe_final
+
+
+if __name__ == '__main__':
+    # Example 3.7.2 from Prof. Cioffi's textbook, use this as a sanity check, two approaches should have the same tap weights and SNR
+    
+    zf = True
+    
+    sampled_pulse_response = np.array([0.9, 1])
+    signal_power = 1#np.mean(abs(sampled_pulse_response**2))
+    noise_var = 0.181
+    n_taps_dfe=1
+    n_taps_ffe=2
+    SNR = 10*np.log10(5.524)
+    delay = 1
+
+    ffe = FFE(sampled_pulse_response, n_taps_pre=0, n_taps_post=1, n_taps_dfe=1, samples_per_symbol=1)
+    tap_weights_ffe = ffe.mmse(SNR=SNR, signal_power=signal_power, optimize_delay=False, zf=zf)
+    delay_opt = ffe.n_taps_pre
+    unbiased_SNR = ffe.unbiased_SNR
+    
+    w_t, delay_opt_Cioffi, dfseSNR = mmse_ffe_dfe(sampled_pulse_response, n_taps_ffe, n_taps_dfe, signal_power, noise_var, oversampling=1, delay=delay, zf=zf)
+    tap_weights_ffe_Cioffi = w_t[:n_taps_ffe]/sum(abs(w_t[:n_taps_ffe]))
