@@ -86,6 +86,9 @@ class FFE():
         # Autocorrelation matrix: A.T @ A
         # cross-correlation matrix: A.T @ c
         
+        SNR_linear = 10**(SNR/10)
+        noise_power = signal_power/SNR_linear
+        
         if optimize_delay==True:
             # sweep all the possible number of ffe precurosrs
             self.unbiased_SNR = -np.inf 
@@ -99,7 +102,7 @@ class FFE():
                 W = np.diag(tmp)
                 
                 if zf == False:
-                    b = np.linalg.inv(self.A.T @ W @ self.A + np.eye(self.n_taps_ffe) * 10**(-(SNR/10))) @ (self.A.T @ c)
+                    b = np.linalg.inv(self.A.T @ W @ self.A + np.eye(self.n_taps_ffe) * noise_power) @ (self.A.T @ c)
                 else:
                     b = np.linalg.inv(self.A.T @ W @ self.A) @ (self.A.T @ c)
 
@@ -107,19 +110,20 @@ class FFE():
                 # cross-correlation
                 Rxy = signal_power * (self.A.T @ c)
                 # auto-correlation
-                # Ryy = signal_power * (self.A.T @ self.A + np.eye(self.n_taps_ffe) * 10**(-(SNR/10)))
+                # Ryy = signal_power * (self.A.T @ self.A + np.eye(self.n_taps_ffe) * noise_power)
                 
                 if zf == False:
                     mmse = signal_power - b.T @ Rxy
                     unbiased_SNR = 10*np.log10(signal_power/mmse - 1)
                 else:
-                    mmse = (signal_power - b.T @ Rxy) + (signal_power * 10**(-(SNR/10)) * linalg.norm(np.squeeze(b))**2)
+                    mmse = (signal_power - b.T @ Rxy) + (noise_power * linalg.norm(np.squeeze(b))**2)
                     unbiased_SNR = 10*np.log10(signal_power/mmse)
                     
                 # print(f'mmse: {mmse} | signal_power: {signal_power} |  b.T @ Rxy: {b.T @ Rxy} ')
                 # print(f'unbiased_SNR: {unbiased_SNR}')
                 
                 if unbiased_SNR > self.unbiased_SNR:
+                    self.mmse = mmse
                     self.unbiased_SNR = unbiased_SNR
                     self.delay = delay
                     self.c = c
@@ -128,25 +132,28 @@ class FFE():
                     self.n_taps_post = self.n_taps_ffe - i -1
                     
                     #normalize tap weights
-                    b = b/np.sum(abs(b))
+                    # b = b/np.sum(abs(b))
+                    max_idx = np.argmax(abs(b))
+                    b = b/b[max_idx]
                     ffe_tap_weights = np.squeeze(b)       
         else:
             Rxy = signal_power * (self.A.T @ self.c)
             if zf == False:
-                Ryy = signal_power * (self.A.T @ self.A) + np.eye(self.n_taps_ffe) * 10**(-(SNR/10))
-                b = np.linalg.inv(self.A.T @ self.W @ self.A + np.eye(self.n_taps_ffe) * 10**(-(SNR/10))) @ (self.A.T @ self.c)
-                mmse = signal_power - b.T @ Rxy
-                self.unbiased_SNR = 10*np.log10(signal_power/mmse - 1)
+                Ryy = signal_power * (self.A.T @ self.A) + np.eye(self.n_taps_ffe) * noise_power
+                b = np.linalg.inv(self.A.T @ self.W @ self.A + np.eye(self.n_taps_ffe) * noise_power) @ (self.A.T @ self.c)
+                self.mmse = signal_power - b.T @ Rxy
+                self.unbiased_SNR = 10*np.log10(signal_power/self.mmse - 1)
             else:
                 Ryy = signal_power * (self.A.T @ self.A)
                 b = np.linalg.inv(self.A.T @ self.W @ self.A) @ (self.A.T @ self.c)        
-                mmse = (signal_power - b.T @ Rxy) + (signal_power * 10**(-(SNR/10)) * linalg.norm(np.squeeze(b))**2)
-                self.unbiased_SNR = 10*np.log10(signal_power/mmse)
+                self.mmse = (signal_power - b.T @ Rxy) + (noise_power * linalg.norm(np.squeeze(b))**2)
+                self.unbiased_SNR = 10*np.log10(signal_power/self.mmse)
                 # print(self.unbiased_SNR )
 
             #normalize tap weights
-            b = b/np.sum(abs(b))
-    
+            max_idx = np.argmax(abs(b))
+            b = b/b[max_idx]
+            # b = b/np.sum(abs(b))
             ffe_tap_weights = np.squeeze(b)
                 
         return ffe_tap_weights
